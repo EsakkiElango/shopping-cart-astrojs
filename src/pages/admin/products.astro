@@ -1,0 +1,503 @@
+---
+import Layout from '../../layouts/Layout.astro';
+
+export const prerender = false;
+---
+
+<Layout title="Shopping Cart — Product Management">
+  <header class="site-header">
+    <div class="shell header-row">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">SC</span>
+        <div>
+          <p class="brand-name">Shopping Cart</p>
+          <p class="brand-sub">Product management</p>
+        </div>
+      </div>
+      <a class="back-link" href="/">← Back to shop</a>
+    </div>
+  </header>
+
+  <main class="shell layout">
+    <section class="form-panel" aria-labelledby="form-heading">
+      <h1 id="form-heading">
+        <span id="form-title-text">Add a product</span>
+      </h1>
+      <div id="form-alert" class="alert" role="alert" hidden></div>
+      <form id="product-form" novalidate>
+        <input type="hidden" id="product-id" value="" />
+
+        <label class="field">
+          <span>Name</span>
+          <input type="text" id="name" name="name" required maxlength="120" />
+        </label>
+
+        <label class="field">
+          <span>Description</span>
+          <textarea id="description" name="description" rows="3" maxlength="2000"></textarea>
+        </label>
+
+        <div>
+          <label class="field">
+            <span>Price (INR)</span>
+            <input type="number" id="price" name="price" min="0" step="0.01" required />
+          </label>
+          <label class="field">
+            <span>Currency</span>
+            <input type="text" disabled id="currency" name="currency" maxlength="3" value="INR" />
+          </label>
+          <label class="field">
+            <span>Stock</span>
+            <input type="number" id="stock" name="stock" min="0" step="1" required />
+          </label>
+        </div>
+
+        <div class="form-actions">
+          <button type="submit" id="submit-btn" class="primary">Add product</button>
+          <button type="button" id="cancel-edit" class="secondary" hidden>Cancel edit</button>
+        </div>
+      </form>
+    </section>
+
+    <section class="list-panel" aria-labelledby="list-heading">
+      <h2 id="list-heading">Products</h2>
+      <div id="product-list" class="product-list">
+        <p class="muted">Loading products…</p>
+      </div>
+    </section>
+  </main>
+</Layout>
+
+<script>
+  interface MoneyDTO {
+    cents: number;
+    currency: string;
+    formatted: string;
+  }
+  interface ProductDTO {
+    id: string;
+    name: string;
+    description: string;
+    price: MoneyDTO;
+    stock: number;
+  }
+
+  const listEl = document.getElementById('product-list')!;
+  const formEl = document.getElementById('product-form') as HTMLFormElement;
+  const alertEl = document.getElementById('form-alert')!;
+  const idField = document.getElementById('product-id') as HTMLInputElement;
+  const nameField = document.getElementById('name') as HTMLInputElement;
+  const descriptionField = document.getElementById('description') as HTMLTextAreaElement;
+  const priceField = document.getElementById('price') as HTMLInputElement;
+  const currencyField = document.getElementById('currency') as HTMLInputElement;
+  const stockField = document.getElementById('stock') as HTMLInputElement;
+  const submitBtn = document.getElementById('submit-btn') as HTMLButtonElement;
+  const cancelBtn = document.getElementById('cancel-edit') as HTMLButtonElement;
+  const formTitle = document.getElementById('form-title-text')!;
+
+  function showAlert(message: string, kind: 'error' | 'success' = 'error'): void {
+    alertEl.textContent = message;
+    alertEl.hidden = false;
+    alertEl.className = kind === 'error' ? 'alert' : 'alert alert-success';
+    setTimeout(() => {
+      alertEl.hidden = true;
+    }, 4000);
+  }
+
+  function escapeHtml(text: string): string {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+  }
+
+  async function api<T>(path: string, init?: RequestInit): Promise<T> {
+    const response = await fetch(path, {
+      headers: init?.body ? { 'Content-Type': 'application/json' } : undefined,
+      ...init,
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(body?.error?.message ?? 'Something went wrong. Try again.');
+    }
+    return body as T;
+  }
+
+  function resetForm(): void {
+    formEl.reset();
+    idField.value = '';
+    currencyField.value = 'INR';
+    submitBtn.textContent = 'Add product';
+    formTitle.textContent = 'Add a product';
+    cancelBtn.hidden = true;
+  }
+
+  function fillFormForEdit(product: ProductDTO): void {
+    idField.value = product.id;
+    nameField.value = product.name;
+    descriptionField.value = product.description;
+    priceField.value = (product.price.cents / 100).toFixed(2);
+    currencyField.value = product.price.currency;
+    stockField.value = String(product.stock);
+    submitBtn.textContent = 'Save changes';
+    formTitle.textContent = `Editing "${product.name}"`;
+    cancelBtn.hidden = false;
+    nameField.focus();
+  }
+
+  function renderProducts(products: ProductDTO[]): void {
+    if (products.length === 0) {
+      listEl.innerHTML = '<p class="muted">No products yet. Add one using the form.</p>';
+      return;
+    }
+    listEl.replaceChildren(
+      ...products.map((product) => {
+        const row = document.createElement('article');
+        row.className = 'product-row';
+        row.innerHTML = `
+          <div class="product-row-info">
+            <p class="product-row-name">${escapeHtml(product.name)}</p>
+            <p class="product-row-desc">${escapeHtml(product.description)}</p>
+          </div>
+          <div class="product-row-meta">
+            <span class="price">${product.price.formatted}</span>
+            <span class="stock">${product.stock} in stock</span>
+          </div>
+          <div class="product-row-actions">
+            <button class="edit" type="button">Edit</button>
+            <button class="delete" type="button">Delete</button>
+          </div>`;
+        row.querySelector('.edit')!.addEventListener('click', () => fillFormForEdit(product));
+        row.querySelector('.delete')!.addEventListener('click', () => deleteProduct(product.id, product.name));
+        return row;
+      }),
+    );
+  }
+
+  async function loadProducts(): Promise<void> {
+    try {
+      const products = await api<ProductDTO[]>('/api/products');
+      renderProducts(products);
+    } catch (error) {
+      listEl.innerHTML = '<p class="muted">Could not load products.</p>';
+      showAlert((error as Error).message);
+    }
+  }
+
+  async function deleteProduct(id: string, name: string): Promise<void> {
+    if (!confirm(`Delete "${name}"? This cannot be undone.`)) return;
+    try {
+      await api(`/api/products/${id}`, { method: 'DELETE' });
+      showAlert(`Deleted "${name}".`, 'success');
+      if (idField.value === id) resetForm();
+      await loadProducts();
+    } catch (error) {
+      showAlert((error as Error).message);
+    }
+  }
+
+  formEl.addEventListener('submit', async (event) => {
+    event.preventDefault();
+
+    const priceDollars = Number(priceField.value);
+    if (Number.isNaN(priceDollars) || priceDollars < 0) {
+      showAlert('Enter a valid price.');
+      return;
+    }
+
+    const payload = {
+      name: nameField.value,
+      description: descriptionField.value,
+      priceCents: Math.round(priceDollars * 100),
+      currency: currencyField.value || 'INR',
+      stock: Number(stockField.value),
+    };
+
+    try {
+      const isEditing = idField.value !== '';
+      if (isEditing) {
+        await api(`/api/products/${idField.value}`, {
+          method: 'PUT',
+          body: JSON.stringify(payload),
+        });
+        showAlert('Product updated.', 'success');
+      } else {
+        await api('/api/products', {
+          method: 'POST',
+          body: JSON.stringify(payload),
+        });
+        showAlert('Product added.', 'success');
+      }
+      resetForm();
+      await loadProducts();
+    } catch (error) {
+      showAlert((error as Error).message);
+    }
+  });
+
+  cancelBtn.addEventListener('click', resetForm);
+
+  loadProducts();
+</script>
+
+<style>
+  .shell {
+    max-width: 68rem;
+    margin: 0 auto;
+    padding: 0 1.25rem;
+  }
+
+  .site-header {
+    background: var(--pine-deep);
+    color: var(--card);
+    border-bottom: 4px solid var(--ochre);
+  }
+
+  .header-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-top: 1rem;
+    padding-bottom: 1rem;
+    gap: 1rem;
+  }
+
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+
+  .brand-mark {
+    display: grid;
+    place-items: center;
+    width: 2.6rem;
+    height: 2.6rem;
+    border: 1.5px solid var(--ochre);
+    border-radius: 50%;
+    font-family: var(--font-display);
+    letter-spacing: 0.05em;
+  }
+
+  .brand-name {
+    margin: 0;
+    font-family: var(--font-display);
+    font-size: 1.2rem;
+  }
+
+  .brand-sub {
+    margin: 0;
+    font-size: 0.78rem;
+    color: #cdd8cb;
+  }
+
+  .back-link {
+    color: var(--card);
+    font-size: 0.9rem;
+    text-decoration: underline;
+    white-space: nowrap;
+  }
+
+  .layout {
+    display: grid;
+    grid-template-columns: 22rem 1fr;
+    gap: 2rem;
+    padding-top: 2.25rem;
+    padding-bottom: 3rem;
+    align-items: start;
+  }
+
+  h1 {
+    font-family: var(--font-display);
+    font-weight: 500;
+    font-size: 1.4rem;
+    margin: 0 0 1rem;
+  }
+
+  h2 {
+    font-family: var(--font-display);
+    font-weight: 500;
+    font-size: 1.4rem;
+    margin: 0 0 1rem;
+  }
+
+  .form-panel,
+  .list-panel {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 1.25rem;
+  }
+
+  .form-panel {
+    position: sticky;
+    top: 1rem;
+  }
+
+  .alert {
+    background: #f6e7e3;
+    color: var(--danger);
+    border: 1px solid #e4c4bc;
+    border-radius: 8px;
+    padding: 0.6rem 0.8rem;
+    font-size: 0.85rem;
+    margin-bottom: 0.75rem;
+  }
+
+  .alert-success {
+    background: #e6efe4;
+    color: var(--pine-deep);
+    border-color: #c3d8bd;
+  }
+
+  .field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    margin-bottom: 0.85rem;
+    font-size: 0.85rem;
+    color: var(--ink-soft);
+  }
+
+  .field input,
+  .field textarea {
+    font: inherit;
+    padding: 0.5rem 0.6rem;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    color: var(--ink);
+    background: var(--paper);
+  }
+
+  .field-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 0.75rem;
+  }
+
+  .form-actions {
+    display: flex;
+    gap: 0.6rem;
+    margin-top: 0.5rem;
+  }
+
+  button.primary {
+    background: var(--pine);
+    color: var(--card);
+    border: none;
+    border-radius: 999px;
+    padding: 0.55rem 1.1rem;
+    font-size: 0.9rem;
+    flex: 1;
+  }
+
+  button.primary:hover {
+    background: var(--pine-deep);
+  }
+
+  button.secondary {
+    background: none;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 0.55rem 1.1rem;
+    font-size: 0.9rem;
+    color: var(--ink-soft);
+  }
+
+  .product-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .product-row {
+    display: grid;
+    grid-template-columns: 1fr auto auto;
+    align-items: center;
+    gap: 1rem;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 0.85rem 1rem;
+  }
+
+  .product-row-name {
+    margin: 0;
+    font-weight: 600;
+  }
+
+  .product-row-desc {
+    margin: 0.2rem 0 0;
+    font-size: 0.82rem;
+    color: var(--ink-soft);
+  }
+
+  .product-row-meta {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 0.2rem;
+    font-size: 0.85rem;
+    white-space: nowrap;
+  }
+
+  .product-row-meta .price {
+    font-weight: 600;
+    color: var(--pine);
+  }
+
+  .product-row-meta .stock {
+    color: var(--ink-soft);
+  }
+
+  .product-row-actions {
+    display: flex;
+    gap: 0.4rem;
+  }
+
+  .product-row-actions button {
+    border: 1px solid var(--line);
+    background: none;
+    border-radius: 999px;
+    padding: 0.35rem 0.8rem;
+    font-size: 0.8rem;
+  }
+
+  .product-row-actions .edit {
+    color: var(--pine);
+  }
+
+  .product-row-actions .delete {
+    color: var(--danger);
+  }
+
+  .muted {
+    color: var(--ink-soft);
+    font-size: 0.9rem;
+  }
+
+  @media (max-width: 860px) {
+    .layout {
+      grid-template-columns: 1fr;
+    }
+
+    .form-panel {
+      position: static;
+    }
+  }
+
+  @media (max-width: 560px) {
+    .field-row {
+      grid-template-columns: 1fr;
+    }
+
+    .product-row {
+      grid-template-columns: 1fr;
+      justify-items: start;
+    }
+
+    .product-row-meta {
+      align-items: flex-start;
+      flex-direction: row;
+      gap: 0.75rem;
+    }
+  }
+</style>

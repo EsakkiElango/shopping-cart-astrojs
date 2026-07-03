@@ -1,0 +1,13 @@
+services:
+  shopping-cart:
+    build: .
+    ports:
+      - "4321:4321"
+    environment:
+      - NODE_ENV=production
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:4321/api/products"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
