@@ -37,7 +37,7 @@ describe('CartService', () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.value.itemCount).toBe(2);
-      expect(result.value.total.formatted).toBe('$56.00');
+      expect(result.value.total.formatted).toBe('₹56.00');
     }
   });
 
@@ -106,7 +106,7 @@ describe('CartService', () => {
         expect(result.value.items).toHaveLength(1);
         expect(result.value.itemCount).toBe(3);
         expect(result.value.orderId).toBeTruthy();
-        expect(result.value.total.formatted).toBe('$84.00');
+        expect(result.value.total.formatted).toBe('₹84.00');
       }
 
       const product = await productService.getProduct(id);
