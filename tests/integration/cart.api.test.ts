@@ -1,9 +1,11 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetContainer } from '@infrastructure/container';
-import { POST as createProduct } from '../../src/pages/api/products/index';
+import { POST as createProduct, GET as listProducts } from '../../src/pages/api/products/index';
+import { PUT as updateProduct } from '../../src/pages/api/products/[id]';
 import { GET as viewCart } from '../../src/pages/api/cart/index';
 import { POST as addItem } from '../../src/pages/api/cart/items/index';
 import { DELETE as removeItem, PATCH as updateItem } from '../../src/pages/api/cart/items/[productId]';
+import { POST as checkout } from '../../src/pages/api/cart/checkout';
 import { call } from './helpers';
 
 async function seedProduct(stock = 10): Promise<string> {
@@ -92,5 +94,43 @@ describe('Cart API', () => {
 
     const again = await call(removeItem, { method: 'DELETE', params: { productId } });
     expect(again.status).toBe(404);
+  });
+
+  it('POST /api/cart/checkout returns 422 for an empty cart', async () => {
+    const res = await call(checkout, { method: 'POST' });
+    expect(res.status).toBe(422);
+    expect(res.body.error.code).toBe('BUSINESS_RULE');
+  });
+
+  it('POST /api/cart/checkout deducts stock, empties the cart, and returns an order id', async () => {
+    const productId = await seedProduct(5);
+    await call(addItem, { method: 'POST', body: { productId, quantity: 2 } });
+
+    const res = await call(checkout, { method: 'POST' });
+    expect(res.status).toBe(200);
+    expect(res.body.orderId).toBeTruthy();
+    expect(res.body.itemCount).toBe(2);
+
+    const cart = await call(viewCart);
+    expect(cart.body.itemCount).toBe(0);
+
+    const products = await call(listProducts);
+    const product = products.body.find((p: { id: string }) => p.id === productId);
+    expect(product.stock).toBe(3);
+  });
+
+  it('POST /api/cart/checkout returns 422 and leaves stock untouched when stock changed underneath the cart', async () => {
+    const productId = await seedProduct(2);
+    await call(addItem, { method: 'POST', body: { productId, quantity: 2 } });
+
+    // Someone else buys the item first, dropping stock below the cart's quantity.
+    await call(updateProduct, { method: 'PUT', params: { id: productId }, body: { stock: 0 } });
+
+    const res = await call(checkout, { method: 'POST' });
+    expect(res.status).toBe(422);
+    expect(res.body.error.code).toBe('BUSINESS_RULE');
+
+    const cart = await call(viewCart);
+    expect(cart.body.itemCount).toBe(2);
   });
 });

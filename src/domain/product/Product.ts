@@ -100,6 +100,18 @@ export class Product {
     return this.props.stock >= requested;
   }
 
+  deductStock(quantity: number): Result<void, DomainError> {
+    if (!this.hasStockFor(quantity)) {
+      return err(
+        DomainError.businessRule(
+          `Only ${this.props.stock} unit(s) of "${this.props.name}" in stock; cannot deduct ${quantity}`,
+        ),
+      );
+    }
+    this.props = { ...this.props, stock: this.props.stock - quantity };
+    return ok(undefined);
+  }
+
   get id(): ProductId {
     return this.props.id;
   }

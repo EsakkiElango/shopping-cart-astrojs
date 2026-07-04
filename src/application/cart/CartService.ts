@@ -34,6 +34,10 @@ export function toCartDTO(cart: Cart): CartDTO {
   };
 }
 
+export interface CheckoutResultDTO extends CartDTO {
+  orderId: string;
+  completedAt: string;
+}
 export class CartService {
   static readonly DEFAULT_CART_ID = 'default';
 
@@ -92,6 +96,43 @@ export class CartService {
 
     await this.carts.save(cart);
     return ok(toCartDTO(cart));
+  }
+
+  async checkout(cartId = CartService.DEFAULT_CART_ID): Promise<Result<CheckoutResultDTO, DomainError>> {
+    const cart = await this.getOrCreateCart(cartId);
+    if (cart.isEmpty()) {
+      return err(DomainError.businessRule('Cart is empty'));
+    }
+
+    const items = cart.getItems();
+    const products = [];
+    for (const item of items) {
+      const product = await this.products.findById(item.productId);
+      if (!product) {
+        return err(DomainError.notFound(`Product ${item.productId.value} no longer exists`));
+      }
+      if (!product.hasStockFor(item.quantity.value)) {
+        return err(
+          DomainError.businessRule(
+            `Only ${product.stock} unit(s) of "${product.name}" in stock; cart holds ${item.quantity.value}`,
+          ),
+        );
+      }
+      products.push({ product, quantity: item.quantity.value });
+    }
+
+    const receipt = toCartDTO(cart);
+
+    for (const { product, quantity } of products) {
+      const deducted = product.deductStock(quantity);
+      if (!deducted.ok) return deducted;
+      await this.products.save(product);
+    }
+
+    cart.clear();
+    await this.carts.save(cart);
+
+    return ok({ ...receipt, orderId: crypto.randomUUID(), completedAt: new Date().toISOString() });
   }
 
   private async resolve(productId: string, quantity: number) {

@@ -84,6 +84,23 @@ describe('Product', () => {
     expect(created.value.hasStockFor(4)).toBe(true);
     expect(created.value.hasStockFor(5)).toBe(false);
   });
+
+  it('deducts stock when enough is available', () => {
+    const created = makeProduct({ stock: 10 });
+    if (!created.ok) throw new Error('setup failed');
+    const result = created.value.deductStock(3);
+    expect(result.ok).toBe(true);
+    expect(created.value.stock).toBe(7);
+  });
+
+  it('rejects deducting more stock than is available, leaving stock unchanged', () => {
+    const created = makeProduct({ stock: 2 });
+    if (!created.ok) throw new Error('setup failed');
+    const result = created.value.deductStock(3);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.code).toBe('BUSINESS_RULE');
+    expect(created.value.stock).toBe(2);
+  });
 });
 
 describe('ProductId', () => {

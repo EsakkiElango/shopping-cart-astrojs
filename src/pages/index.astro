@@ -16,9 +16,9 @@ export const prerender = false;
       </div>
       <div class="header-actions">
         <a class="admin-link" href="/admin/products">Manage products</a>
-        <p class="cart-badge" aria-live="polite">
+        <button type="button" id="cart-badge" class="cart-badge" aria-live="polite" aria-label="View cart">
           Cart · <span id="cart-count">0</span> item<span id="cart-count-plural">s</span>
-        </p>
+        </button>
       </div>
     </div>
   </header>
@@ -31,7 +31,7 @@ export const prerender = false;
       </div>
     </section>
 
-    <aside class="cart-panel" aria-labelledby="cart-heading">
+    <aside id="cart-panel" class="cart-panel" aria-labelledby="cart-heading" tabindex="-1">
       <h2 id="cart-heading">Your cart</h2>
       <div id="cart-alert" class="alert" role="alert" hidden></div>
       <div id="cart-items" class="cart-items">
@@ -41,7 +41,7 @@ export const prerender = false;
         <dt>Total</dt>
         <dd id="cart-total">₹0.00</dd>
       </dl>
-      <button class="checkout" id="checkout" disabled>Checkout</button>
+      <button class="checkout" id="checkout">Checkout</button>
     </aside>
   </main>
 </Layout>
@@ -71,18 +71,26 @@ export const prerender = false;
     itemCount: number;
     total: MoneyDTO;
   }
+  interface CheckoutResultDTO extends CartDTO {
+    orderId: string;
+    completedAt: string;
+  }
 
   const grid = document.getElementById('product-grid')!;
+  const cartBadge = document.getElementById('cart-badge')!;
+  const cartPanel = document.getElementById('cart-panel')!;
   const cartItemsEl = document.getElementById('cart-items')!;
   const cartTotalEl = document.getElementById('cart-total')!;
   const cartCountEl = document.getElementById('cart-count')!;
   const cartCountPluralEl = document.getElementById('cart-count-plural')!;
   const alertEl = document.getElementById('cart-alert')!;
+  const checkoutBtn = document.getElementById('checkout') as HTMLButtonElement;
 
   let alertTimer: ReturnType<typeof setTimeout> | undefined;
 
-  function showAlert(message: string): void {
+  function showAlert(message: string, kind: 'error' | 'success' = 'error'): void {
     alertEl.textContent = message;
+    alertEl.className = kind === 'error' ? 'alert' : 'alert alert-success';
     alertEl.hidden = false;
     clearTimeout(alertTimer);
     alertTimer = setTimeout(() => {
@@ -132,6 +140,7 @@ export const prerender = false;
     cartCountEl.textContent = String(cart.itemCount);
     cartCountPluralEl.textContent = cart.itemCount === 1 ? '' : 's';
     cartTotalEl.textContent = cart.total.formatted;
+    checkoutBtn.disabled = cart.items.length === 0;
 
     if (cart.items.length === 0) {
       cartItemsEl.innerHTML = '<p class="muted">Your cart is empty. Add something from the shelf.</p>';
@@ -208,6 +217,23 @@ export const prerender = false;
     }
   }
 
+  async function checkout(): Promise<void> {
+    checkoutBtn.disabled = true;
+    try {
+      const receipt = await api<CheckoutResultDTO>('/api/cart/checkout', { method: 'POST' });
+      showAlert(`Order placed — total ${receipt.total.formatted}. Stock has been updated.`, 'success');
+      const [products, cart] = await Promise.all([
+        api<ProductDTO[]>('/api/products'),
+        api<CartDTO>('/api/cart'),
+      ]);
+      renderProducts(products);
+      renderCart(cart);
+    } catch (error) {
+      showAlert((error as Error).message);
+      checkoutBtn.disabled = false;
+    }
+  }
+
   async function load(): Promise<void> {
     try {
       const [products, cart] = await Promise.all([
@@ -220,6 +246,15 @@ export const prerender = false;
       showAlert((error as Error).message);
     }
   }
+
+  cartBadge.addEventListener('click', () => {
+    cartPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    cartPanel.classList.add('cart-panel-highlight');
+    cartPanel.focus({ preventScroll: true });
+    setTimeout(() => cartPanel.classList.remove('cart-panel-highlight'), 1200);
+  });
+
+  checkoutBtn.addEventListener('click', checkout);
 
   load();
 </script>
@@ -278,11 +313,22 @@ export const prerender = false;
 
   .cart-badge {
     margin: 0;
+    font: inherit;
     font-size: 0.9rem;
+    color: inherit;
+    background: none;
     border: 1px solid rgba(255 255 255 / 0.35);
     border-radius: 999px;
     padding: 0.35rem 0.9rem;
     white-space: nowrap;
+    cursor: pointer;
+    transition: background 120ms ease, border-color 120ms ease;
+  }
+
+  .cart-badge:hover,
+  .cart-badge:focus-visible {
+    background: rgba(255 255 255 / 0.12);
+    border-color: rgba(255 255 255 / 0.6);
   }
 
   .header-actions {
@@ -416,6 +462,21 @@ export const prerender = false;
     padding: 1.25rem;
     position: sticky;
     top: 1rem;
+    scroll-margin-top: 1rem;
+    outline: none;
+  }
+
+  .cart-panel-highlight {
+    animation: cart-panel-flash 1.2s ease;
+  }
+
+  @keyframes cart-panel-flash {
+    0% {
+      box-shadow: 0 0 0 3px var(--ochre);
+    }
+    100% {
+      box-shadow: 0 0 0 0 transparent;
+    }
   }
 
   .cart-panel h2 {
@@ -433,6 +494,12 @@ export const prerender = false;
     padding: 0.6rem 0.8rem;
     font-size: 0.85rem;
     margin-bottom: 0.75rem;
+  }
+
+  .alert-success {
+    background: #e6efe4;
+    color: var(--pine-deep);
+    border-color: #c3d8bd;
   }
 
   .cart-items {
